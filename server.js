@@ -1,65 +1,86 @@
+// server.js
 const express = require('express');
+const http = require('http');
+const socketIo = require('socket.io');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const bodyParser = require('body-parser');
-
+const Message = require('./message');  // MongoDB message schema
 const app = express();
-const port = process.env.PORT || 5000;
+const server = http.createServer(app);
+const io = socketIo(server, {
+    cors: {
+        origin: 'http://localhost:3001',  // React frontend's URL
+        methods: ['GET', 'POST']
+    }
+});
 
-// Middleware
 app.use(cors());
-app.use(bodyParser.json());
+app.use(express.json());
 
-// MongoDB connection
-mongoose.connect('mongodb://localhost:27017/branchMessages', {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-}).then(() => {
-  console.log('MongoDB connected');
-}).catch(err => {
-  console.error('Connection error', err);
-});
+// MongoDB Connection
+mongoose.connect('mongodb://localhost:27017/customerMessages', { useNewUrlParser: true, useUnifiedTopology: true })
+    .then(() => console.log('MongoDB connected'))
+    .catch((err) => console.error('MongoDB connection error:', err));
 
-// Define Message Schema
-const messageSchema = new mongoose.Schema({
-  customerName: String,
-  message: String,
-  agentResponse: String,
-  priority: { type: String, default: 'normal' },
-  claimedBy: String,
-  isResolved: { type: Boolean, default: false },
-});
-
-const Message = mongoose.model('Message', messageSchema);
-
-// Routes
-// POST: Receive new customer message
-app.post('/api/messages', async (req, res) => {
-  const { customerName, message } = req.body;
-  const newMessage = new Message({ customerName, message });
-  await newMessage.save();
-  res.status(201).json(newMessage);
-});
-
-// GET: Retrieve all messages
+// API Endpoint to fetch messages
 app.get('/api/messages', async (req, res) => {
-  const messages = await Message.find();
-  res.status(200).json(messages);
+    try {
+        const messages = await Message.find();
+        res.json(messages);
+    } catch (err) {
+        res.status(500).send('Server error');
+    }
 });
 
-// PUT: Respond to a message
-app.put('/api/messages/:id/respond', async (req, res) => {
-  const { id } = req.params;
-  const { agentResponse, agentName } = req.body;
-  const updatedMessage = await Message.findByIdAndUpdate(
-    id,
-    { agentResponse, claimedBy: agentName, isResolved: true },
-    { new: true }
-  );
-  res.status(200).json(updatedMessage);
+// WebSocket connection for real-time updates
+io.on('connection', (socket) => {
+    console.log('Agent connected');
+
+    // Handle agent's response
+    socket.on('respondMessage', async ({ messageId, response }) => {
+        try {
+            const message = await Message.findById(messageId);
+            if (message && !message.responded) {
+                message.response = response;
+                message.responded = true;
+                await message.save();
+                io.emit('messageResponded', message);  // Notify all connected agents
+            }
+        } catch (err) {
+            console.error('Error responding to message:', err);
+        }
+    });
+
+    socket.on('disconnect', () => {
+        console.log('Agent disconnected');
+    });
 });
 
-// Start server
-app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
+// Function to simulate incoming messages
+const simulateIncomingMessages = () => {
+    setInterval(async () => {
+        const messageData = {
+            customerId: `customer${Math.floor(Math.random() * 100)}`,
+            message: 'This is a simulated customer message.',
+            responded: false, // Initial state
+            response: '' // No response initially
+        };
+
+        try {
+            const newMessage = new Message(messageData);
+            await newMessage.save();  // Save message to the database
+            io.emit('newMessage', newMessage);  // Emit the new message to all connected clients
+            console.log('Simulated incoming message:', messageData);
+        } catch (err) {
+            console.error('Error saving simulated message:', err);
+        }
+    }, 5000); // Simulate a new message every 5 seconds
+};
+
+// Start simulating incoming messages
+simulateIncomingMessages();
+
+// Start the server
+server.listen(3000, () => {
+    console.log('Server running on port 3000');
 });
