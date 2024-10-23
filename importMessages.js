@@ -7,7 +7,7 @@ const url = 'mongodb://localhost:27017';
 const client = new MongoClient(url);
 
 // Database and collection name
-const dbName = 'messagingApp';
+const dbName = 'mydatabase'; // Ensure this matches your MongoDB database
 const collectionName = 'messages';
 
 async function loadCSVToMongoDB() {

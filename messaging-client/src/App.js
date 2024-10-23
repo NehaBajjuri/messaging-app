@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import io from 'socket.io-client';
 import axios from 'axios';
 
-const socket = io('http://localhost:3000');
+const socket = io('http://localhost:3001');
 
 const App = () => {
     const [messages, setMessages] = useState([]);
@@ -12,11 +12,11 @@ const App = () => {
     useEffect(() => {
         const fetchMessages = async () => {
             try {
-                const res = await axios.get('http://localhost:3000/messages');
-                console.log('Messages fetched:', res.data); // Debugging
+                const res = await axios.get('http://localhost:3001/api/messages');
+                console.log('Messages fetched:', res.data);
                 setMessages(res.data);
             } catch (error) {
-                console.error('Error fetching messages:', error);
+                console.error('Error fetching messages:', error.response ? error.response.data : error.message);
                 setError('Failed to load messages. Please try again later.');
             }
         };
@@ -44,8 +44,20 @@ const App = () => {
     const handleResponse = async (messageId, customerId) => {
         const messageResponse = response[messageId]?.trim(); // Get the response for the specific message
         if (messageResponse) {
-            socket.emit('respondMessage', { messageId, customerId, response: messageResponse });
-            setResponse((prev) => ({ ...prev, [messageId]: '' })); // Clear response for the specific message
+              // Emit the response via socket
+              socket.emit('respondMessage', { messageId, customerId, response: messageResponse });
+
+              // Update the messages state optimistically
+              setMessages((prev) =>
+                  prev.map((msg) => 
+                      msg._id === messageId 
+                      ? { ...msg, responded: true, response: messageResponse } // Update message object
+                      : msg
+                  )
+                );
+
+                // Clear the response for the specific message
+                setResponse((prev) => ({ ...prev, [messageId]: '' }));
         } else {
             setError('Response cannot be empty.'); // Error feedback
         }
