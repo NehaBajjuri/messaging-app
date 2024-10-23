@@ -1,84 +1,66 @@
-// server.js
 const express = require('express');
+const mongoose = require('mongoose');
 const http = require('http');
 const socketIo = require('socket.io');
-const mongoose = require('mongoose');
-const cors = require('cors');
-const Message = require('./message');  // MongoDB message schema
+
 const app = express();
 const server = http.createServer(app);
-const io = socketIo(server, {
-    cors: {
-        origin: 'http://localhost:3001',  // React frontend's URL
-        methods: ['GET', 'POST']
-    }
+const io = socketIo(server);
+
+// Connect to MongoDB
+mongoose.connect('mongodb://localhost:27017/mydatabase', { useNewUrlParser: true, useUnifiedTopology: true })
+    .then(() => console.log('Database connected successfully!'))
+    .catch(err => console.error('Database connection error:', err));
+
+// Define your Message schema and model
+const messageSchema = new mongoose.Schema({
+    customerId: String,
+    message: String,
+    responded: { type: Boolean, default: false },
+    response: String
 });
 
-app.use(cors());
-app.use(express.json());
+const Message = mongoose.model('Message', messageSchema);
 
-// MongoDB Connection
-mongoose.connect('mongodb://localhost:27017/customerMessages', { useNewUrlParser: true, useUnifiedTopology: true })
-    .then(() => console.log('MongoDB connected'))
-    .catch((err) => console.error('MongoDB connection error:', err));
-
-// API Endpoint to fetch messages
-app.get('/api/messages', async (req, res) => {
+// Load messages from the database
+app.get('/messages', async (req, res) => {
     try {
         const messages = await Message.find();
         res.json(messages);
-    } catch (err) {
-        res.status(500).send('Server error');
+    } catch (error) {
+        console.error('Error fetching messages:', error);
+        res.status(500).send('Internal Server Error');
     }
 });
 
-// WebSocket connection for real-time updates
+// Socket.IO setup
 io.on('connection', (socket) => {
-    console.log('Agent connected');
+    console.log('A user connected');
 
-    // Handle agent's response
-    socket.on('respondMessage', async ({ messageId, response }) => {
+    // Emit all messages to the newly connected client
+    Message.find().then(messages => {
+        socket.emit('allMessages', messages);
+    });
+
+    // Handle new message responses
+    socket.on('respondMessage', async ({ messageId, customerId, response }) => {
         try {
-            const message = await Message.findById(messageId);
-            if (message && !message.responded) {
-                message.response = response;
-                message.responded = true;
-                await message.save();
-                io.emit('messageResponded', message);  // Notify all connected agents
-            }
-        } catch (err) {
-            console.error('Error responding to message:', err);
+            await Message.findByIdAndUpdate(messageId, {
+                responded: true,
+                response: response
+            });
+            // Emit the updated message back to clients
+            const updatedMessage = await Message.findById(messageId);
+            io.emit('messageResponded', updatedMessage);
+        } catch (error) {
+            console.error('Error updating message:', error);
         }
     });
 
     socket.on('disconnect', () => {
-        console.log('Agent disconnected');
+        console.log('A user disconnected');
     });
 });
-
-// Function to simulate incoming messages
-const simulateIncomingMessages = () => {
-    setInterval(async () => {
-        const messageData = {
-            customerId: `customer${Math.floor(Math.random() * 100)}`,
-            message: 'This is a simulated customer message.',
-            responded: false, // Initial state
-            response: '' // No response initially
-        };
-
-        try {
-            const newMessage = new Message(messageData);
-            await newMessage.save();  // Save message to the database
-            io.emit('newMessage', newMessage);  // Emit the new message to all connected clients
-            console.log('Simulated incoming message:', messageData);
-        } catch (err) {
-            console.error('Error saving simulated message:', err);
-        }
-    }, 5000); // Simulate a new message every 5 seconds
-};
-
-// Start simulating incoming messages
-simulateIncomingMessages();
 
 // Start the server
 server.listen(3000, () => {

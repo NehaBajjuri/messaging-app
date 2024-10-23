@@ -1,35 +1,41 @@
-// importMessages.js
-const mongoose = require('mongoose');
-const csv = require('csv-parser');
 const fs = require('fs');
-const Message = require('./message');  // MongoDB message schema
+const csv = require('csv-parser');
+const { MongoClient } = require('mongodb');
 
-// MongoDB Connection
-mongoose.connect('mongodb://localhost:27017/customerMessages', { useNewUrlParser: true, useUnifiedTopology: true })
-    .then(() => console.log('MongoDB connected'))
-    .catch((err) => console.error('MongoDB connection error:', err));
+// MongoDB connection URL
+const url = 'mongodb://localhost:27017';
+const client = new MongoClient(url);
 
-// Read CSV file and insert messages into MongoDB
-const importMessages = () => {
-    fs.createReadStream('questionsdata.csv')
-        .pipe(csv())
-        .on('data', async (row) => {
-            try {
-                const message = new Message({
-                    customerId: row.customerId,
-                    message: row.message,
-                    responded: false,
-                    response: ''
-                });
-                await message.save();
-            } catch (err) {
-                console.error('Error saving message:', err);
-            }
-        })
-        .on('end', () => {
-            console.log('CSV file successfully processed and messages imported.');
-            mongoose.connection.close();
-        });
-};
+// Database and collection name
+const dbName = 'messagingApp';
+const collectionName = 'messages';
 
-importMessages();
+async function loadCSVToMongoDB() {
+    try {
+        // Connect to MongoDB
+        await client.connect();
+        console.log('Connected successfully to MongoDB server');
+        
+        const db = client.db(dbName);
+        const collection = db.collection(collectionName);
+
+        // Read CSV file and insert data into MongoDB
+        const results = [];
+        fs.createReadStream('questionsdata.csv') // replace with your CSV file path
+            .pipe(csv())
+            .on('data', (data) => results.push(data))
+            .on('end', async () => {
+                // Insert all CSV data into the collection
+                const insertResult = await collection.insertMany(results);
+                console.log(`${insertResult.insertedCount} records inserted into the database.`);
+                
+                // Close the MongoDB connection
+                client.close();
+            });
+    } catch (err) {
+        console.error(err);
+    }
+}
+
+// Run the CSV loading function
+loadCSVToMongoDB();
